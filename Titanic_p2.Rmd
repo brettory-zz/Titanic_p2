@@ -1,0 +1,151 @@
+---
+title: "Predicting survival on the Titanic: Part 2/2 Random Forest"
+# author: "Brett Ory"
+thumbnailImagePosition: left
+thumbnailImage: hhttps://images.unsplash.com/photo-1418065460487-3e41a6c84dc5?auto=format&fit=crop&w=1050&q=80
+coverImage: https://images.unsplash.com/photo-1418065460487-3e41a6c84dc5?auto=format&fit=crop&w=1050&q=80
+metaAlignment: center
+coverMeta: out
+date: 2018-01-21T21:13:14-05:00
+categories: ["Personal projects"]
+tags: ["kaggle", "decision trees", "random forest", "predict", "cross-validation"]
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#library(plyr)
+#library(dplyr)
+```
+
+
+
+
+Just as the original Titanic VHS was published in two video cassettes, this Titanic analysis is also being published in two posts. 
+
+
+In this post--part 2--I’m going to be exploring random forests for the first time, and I will compare it to the outcome of the logistic regression I did last time. 
+
+<br>
+
+## Random forest vs. Logistic regression
+
+
+Last time I explained how logistic regression uses a link function transforms non-linear relationships into linear ones. This means that although the outcome is discrete, a logistic regression assumes that the decision boundary given the variables ("feature space" in machine learning terminology) is linear. A random forest works a little differently. A random forest is made up of a number of decision trees, where each decision tree makes a series of decisions based on a subset of the data until it predicts the ultimate outcome, in this case survival or death. Because single decision trees are prone to over fitting, random forests are used to compensate by including multiple trees based on subsets of the data. Essentially, both algorithms can be used to form expectations about who would have survived the Titanic. 
+
+
+Practically, there are a few important differences to note:    
+1. It's not necessary to dummy code the categorical variables    
+2. You don't need to explicitly test interactions between variables (example gender and class), these are automatically identified by the algorithm. 
+
+After cleaning the data last time we ended up with this Titanic dataset
+```{r view data}
+load("titanic.RData")
+head(titanic)
+```
+
+The complete dataset is a mix of the test and train Kaggle sets, indicated by the variable tID, where 0 = train and 1 = test 
+
+
+I cleaned the data in the previous post, but before I run randomForest I want to be sure all categorical variables are recognized as such by R. 
+
+```{R}
+str(titanic)
+```
+It looks like Survived, Pclass, SibSp and Parch are coded as integers but this should be factor. Recode to factor
+
+```{r}
+titanic$Survived <- as.factor(titanic$Survived)
+titanic$Pclass <- as.factor(titanic$Pclass)
+titanic$SibSp <- as.factor(titanic$SibSp)
+titanic$Parch <- as.factor(titanic$Parch)
+
+str(titanic)
+```
+
+<br>
+
+## Random Forest
+
+Now we try a random forest.
+
+Load package
+```{r load package, echo=F, warning=F}
+library(randomForest)
+```
+
+Re-split data into test and train
+```{r recreate test and train data}
+train <- titanic[titanic$tID==0,]
+test  <- titanic[titanic$tID==1,]
+```
+
+RandomForest command takes a formula as its first input in the form of y ~ a + b + c. In this case the formula is easy to write by hand, but it gets tedious to write out each variable name if there are more than ~10. This formula automates the process. 
+```{r}
+smalldata <- train[,c("Survived","Pclass","Sex","Age","SibSp","Parch","Embarked")]
+varNames <- names(smalldata)
+
+# Exclude Survived
+varNames <- varNames[!varNames %in% c("Survived")]
+ 
+# add + sign between independent variables
+varNames <- paste(varNames, collapse = "+")
+ 
+# Add Survived and convert to an object of type formula 
+formula_rf <- as.formula(paste("Survived", varNames, sep = " ~ "))
+```
+
+Run random forest
+```{r randomForest}
+model2 <- randomForest(formula_rf, data=smalldata, ntree=100, # number of decision trees in forest
+                         importance=TRUE, # importance = to assess relative importance of predictors 
+                         proximity=TRUE) # proximity = how similar two observations are, i.e. how likely to end in same leaf on different trees
+model2
+```
+
+The results will vary slightly each time we run it because they are based on a random selection of cases, but the OOB (out of bag) error rate should be approximately 18%. With this number, the lower it is the better. In the train data there are 342 survivals and total of 891 passengers, amounting to a survival rate of 38.38%. For reference, if we assumed that every passenger in the train set died, we would have an error rate of 38%. That the actual error rate is lower than the "random" error rate, tells us the classifier is doing something right. Turning to the confusion matrix, we see that the classifier was better at predicting death than survival. It has a false negative rate (the first row) of approx. 9% and a false positive rate of approx. 34%.
+
+
+<br>
+
+## Model assessment
+
+We start with a visual assessment of trace plots of the three error rates to check whether the estimates converged.  
+```{r}
+plot(model2)
+```
+The green line represents the type 1 error (false positive), black line is OOB error rate, and red line is type 2 error (false negative). These lines look pretty stable after about 50 trees, so I'm satisfied with the decision to limit the forest to 100 trees. 
+
+<br>
+
+When running the random forest we told the model to track the importance of each variable. This we can print in a table and plot: 
+```{r}
+# Table
+data.frame(importance(model2, type=2))
+
+# Variable Importance Plot
+varImpPlot(model2, sort = T)
+```
+
+both the plot and the table show that sex is by far the most important variable. What I don't like about either the table or the plot is that they only show the relative importance of each variable, and not their combined importance a la margins. 
+
+<br>
+
+Make predictions
+```{r}
+model2$predicted.response <- predict(model2 ,smalldata)
+table(model2$predicted.response)
+```
+
+```{r}
+Accuracy <- mean(model2$predicted.response == smalldata$Survived)
+Accuracy
+```
+
+## Conclusions
+
+Accuracy is 87%. This is slightly higher than logistic regression, and the run time (and data cleaning time) was noticeably faster. However, with logistic regression we could easily see the relationship each variable had to the outcome, and using margins we could visualize the relationship between variables (i.e. interactions). Each variable is working much more behind the scenes with random forest--even the ability to see the importance of each variable is by default turned off. So, the tl;dr is that random forest is better for predicting the outcome and logistic regression is better for modeling the effect of each variable.    
+
+This post can be found on [GitHub](https://github.com/brettory/Titanic_p2)
+
+
